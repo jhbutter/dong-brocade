@@ -1,22 +1,44 @@
 import { useState, useEffect, useRef, PointerEvent, MouseEvent } from 'react';
-import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { DONG_BROCADE_CARDS, DongBrocadeCard } from '../data/dongBrocadeCards';
 
 const CARDS = DONG_BROCADE_CARDS;
 const MAX_CONFIRMED_CARDS = 3;
+const normalizeRotation = (value: number) => ((value % 360) + 360) % 360;
+
+type SelectedCardOrigin = {
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  rotate: number;
+  targetWidth: number;
+  targetHeight: number;
+};
+
+const getExpandedCardSize = () =>
+  typeof window !== 'undefined' && window.innerWidth >= 768
+    ? { width: 320, height: 480 }
+    : { width: 240, height: 360 };
+
+const normalizeDegrees = (value: number) => ((value % 360) + 540) % 360 - 180;
 
 export default function DongBrocadeHero() {
   const [selectedCard, setSelectedCard] = useState<DongBrocadeCard | null>(null);
+  const [selectedCardOrigin, setSelectedCardOrigin] = useState<SelectedCardOrigin | null>(null);
   const [isFlipped, setIsFlipped] = useState(true);
   const [confirmedCards, setConfirmedCards] = useState<DongBrocadeCard[]>([]);
   const [rotationPaused, setRotationPaused] = useState(false);
+  const [resumeRotationOnExit, setResumeRotationOnExit] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [radius, setRadius] = useState(0);
+  const [rotationDeg, setRotationDeg] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
-  
-  const rotation = useMotionValue(0);
   const lastAngle = useRef(0);
+  const rotationRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef<number | null>(null);
   const isSelectedCardConfirmed = selectedCard
     ? confirmedCards.some((card) => card.code === selectedCard.code)
     : false;
@@ -30,14 +52,14 @@ export default function DongBrocadeHero() {
     ) {
       setConfirmedCards([...confirmedCards, selectedCard]);
       setSelectedCard(null);
-      setRotationPaused(false);
+      setResumeRotationOnExit(true);
     }
   };
 
   const handleClose = (e: PointerEvent | MouseEvent) => {
     e.stopPropagation();
     setSelectedCard(null);
-    setRotationPaused(false);
+    setResumeRotationOnExit(true);
   };
 
   const handlePointerDown = (e: PointerEvent) => {
@@ -47,7 +69,7 @@ export default function DongBrocadeHero() {
     if (!rect) return;
     
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height * 0.75;
+    const centerY = rect.top + rect.height * 0.9;
     
     const angle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
     lastAngle.current = angle;
@@ -60,12 +82,14 @@ export default function DongBrocadeHero() {
     
     const rect = containerRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height * 0.75;
+    const centerY = rect.top + rect.height * 0.9;
     
     const angle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
     const deltaAngle = (angle - lastAngle.current) * (180 / Math.PI);
     
-    rotation.set(rotation.get() + deltaAngle);
+    const nextRotation = normalizeRotation(rotationRef.current + deltaAngle);
+    rotationRef.current = nextRotation;
+    setRotationDeg(nextRotation);
     lastAngle.current = angle;
   };
 
@@ -76,12 +100,30 @@ export default function DongBrocadeHero() {
     }
   };
 
+  const captureCardOrigin = (cardElement: HTMLDivElement, screenRotation: number) => {
+    const rect = cardElement.getBoundingClientRect();
+    const innerCard = cardElement.firstElementChild as HTMLElement | null;
+    const { width: targetWidth, height: targetHeight } = getExpandedCardSize();
+    const sourceWidth = innerCard?.offsetWidth ?? rect.width;
+    const sourceHeight = innerCard?.offsetHeight ?? rect.height;
+
+    setSelectedCardOrigin({
+      x: rect.left + rect.width / 2 - window.innerWidth / 2,
+      y: rect.top + rect.height / 2 - window.innerHeight / 2,
+      scaleX: sourceWidth / targetWidth,
+      scaleY: sourceHeight / targetHeight,
+      rotate: normalizeDegrees(screenRotation),
+      targetWidth,
+      targetHeight,
+    });
+  };
+
   useEffect(() => {
     const updateLayout = () => {
       if (!containerRef.current) return;
       const { clientWidth, clientHeight } = containerRef.current;
-      const minDim = Math.min(clientWidth, clientHeight);
-      setRadius(minDim * 0.74);
+      const nextRadius = Math.min(clientWidth * 0.53, clientHeight * 0.86);
+      setRadius(nextRadius);
     };
 
     const observer = new ResizeObserver(updateLayout);
@@ -95,19 +137,37 @@ export default function DongBrocadeHero() {
 
   useEffect(() => {
     if (!rotationPaused && !isDragging) {
-      const controls = animate(rotation, rotation.get() + 360, {
-        duration: 240,
-        repeat: Infinity,
-        ease: "linear",
-      });
-      return () => controls.stop();
+      const rotationPerMs = 360 / 240000;
+
+      const tick = (timestamp: number) => {
+        if (lastFrameTimeRef.current === null) {
+          lastFrameTimeRef.current = timestamp;
+        }
+
+        const delta = timestamp - lastFrameTimeRef.current;
+        lastFrameTimeRef.current = timestamp;
+
+        const nextRotation = normalizeRotation(rotationRef.current + delta * rotationPerMs);
+        rotationRef.current = nextRotation;
+        setRotationDeg(nextRotation);
+        frameRef.current = window.requestAnimationFrame(tick);
+      };
+
+      frameRef.current = window.requestAnimationFrame(tick);
+      return () => {
+        if (frameRef.current !== null) {
+          window.cancelAnimationFrame(frameRef.current);
+        }
+        frameRef.current = null;
+        lastFrameTimeRef.current = null;
+      };
     }
-  }, [rotationPaused, isDragging, rotation]);
+  }, [rotationPaused, isDragging]);
 
   return (
-    <div className="min-h-screen w-full bg-stone-100 flex items-center justify-center p-4 md:p-12 font-sans select-none">
+    <div className="min-h-screen w-full bg-stone-100 flex items-center justify-center p-3 md:p-8 lg:p-10 font-sans select-none">
       {/* iPad Pro 11 Device Frame - Landscape */}
-      <div className="relative w-full max-w-[1194px] aspect-[1194/834] bg-white overflow-hidden shadow-[0_50px_100px_-20px_rgba(0,0,0,0.3)] rounded-[3rem] border-[12px] border-stone-900 flex flex-col items-center justify-center">
+      <div className="relative w-full max-w-[1320px] aspect-[1280/880] bg-white overflow-hidden shadow-[0_50px_100px_-20px_rgba(0,0,0,0.3)] rounded-[3.25rem] border-[10px] md:border-[12px] border-stone-900 flex flex-col items-center justify-center">
         <div 
           ref={containerRef} 
           className="absolute inset-0 overflow-hidden touch-none"
@@ -118,7 +178,7 @@ export default function DongBrocadeHero() {
         >
           {/* Central Content (Inside the arc) */}
           <div className="absolute inset-0 flex flex-col items-center justify-center z-0 pointer-events-none">
-            <div className="text-center max-w-2xl px-8 mt-[-12vh]">
+            <div className="text-center max-w-2xl px-8 mt-[2vh] md:mt-[4vh]">
               <motion.h1 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -149,8 +209,8 @@ export default function DongBrocadeHero() {
 
           {/* Card Ring Container - Moved down to accommodate larger radius */}
           <motion.div
-            className="absolute left-1/2 top-[75%] flex items-center justify-center z-10 pointer-events-none"
-            style={{ rotate: rotation }}
+            className="absolute left-1/2 top-[90%] flex items-center justify-center z-10 pointer-events-none"
+            style={{ rotate: rotationDeg }}
           >
             <div className="relative">
               {CARDS.map((card, index) => {
@@ -162,7 +222,6 @@ export default function DongBrocadeHero() {
                 return (
                   <motion.div
                     key={card.id}
-                    layoutId={`card-${card.id}`}
                     className="absolute cursor-pointer pointer-events-auto"
                     style={{
                       left: x,
@@ -174,12 +233,13 @@ export default function DongBrocadeHero() {
                     whileHover={{ scale: 1.1, zIndex: 50 }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      captureCardOrigin(e.currentTarget as HTMLDivElement, cardRotation + rotationDeg);
                       setSelectedCard(card);
                       setIsFlipped(true); // Reset to back side when opening
                       setRotationPaused(true);
                     }}
                   >
-                    <div className="relative w-[56px] h-[84px] md:w-[70px] md:h-[106px] rounded-lg shadow-2xl border border-white/30 overflow-hidden bg-stone-900">
+                    <div className="relative w-[clamp(62px,6.2vw,86px)] h-[clamp(94px,9.2vw,130px)] rounded-lg shadow-2xl border border-white/30 overflow-hidden bg-stone-900">
                       <img
                         src={card.frontImage}
                         alt={`${card.name} front`}
@@ -237,7 +297,15 @@ export default function DongBrocadeHero() {
       </div>
 
       {/* Magnified View Overlay */}
-      <AnimatePresence>
+      <AnimatePresence
+        onExitComplete={() => {
+          if (resumeRotationOnExit && !isDragging) {
+            setRotationPaused(false);
+          }
+          setResumeRotationOnExit(false);
+          setSelectedCardOrigin(null);
+        }}
+      >
         {selectedCard && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -245,15 +313,38 @@ export default function DongBrocadeHero() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/60 backdrop-blur-lg"
           >
-            {/* 1. 这个层级负责 layout 飞行动画 (位置和大小) */}
             <motion.div 
-              layoutId={`card-${selectedCard.id}`}
-              className="relative w-[240px] h-[360px] md:w-[320px] md:h-[480px] cursor-pointer"
+              className="relative cursor-pointer"
               onClick={() => setIsFlipped(!isFlipped)}
+              initial={
+                selectedCardOrigin
+                  ? {
+                      x: selectedCardOrigin.x,
+                      y: selectedCardOrigin.y,
+                      scaleX: selectedCardOrigin.scaleX,
+                      scaleY: selectedCardOrigin.scaleY,
+                      rotate: selectedCardOrigin.rotate,
+                    }
+                  : false
+              }
+              animate={{ x: 0, y: 0, scaleX: 1, scaleY: 1, rotate: 0 }}
+              exit={
+                selectedCardOrigin
+                  ? {
+                      x: selectedCardOrigin.x,
+                      y: selectedCardOrigin.y,
+                      scaleX: selectedCardOrigin.scaleX,
+                      scaleY: selectedCardOrigin.scaleY,
+                      rotate: selectedCardOrigin.rotate,
+                    }
+                  : undefined
+              }
+              transition={{ type: "spring", stiffness: 220, damping: 28 }}
               style={{ 
+                  width: selectedCardOrigin?.targetWidth ?? getExpandedCardSize().width,
+                  height: selectedCardOrigin?.targetHeight ?? getExpandedCardSize().height,
                   perspective: "1500px",
-                  // 强制覆盖 layout 带来的原有 rotateZ，确保它是正的
-                  rotate: 0 
+                  transformOrigin: "center center",
               }}
             >
               {/* Close Button */}
@@ -358,4 +449,3 @@ export default function DongBrocadeHero() {
     </div>
   );
 }
-
