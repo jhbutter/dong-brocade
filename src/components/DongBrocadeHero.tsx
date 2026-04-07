@@ -12,7 +12,7 @@ const COPY = {
     title: ['织出你的侗锦灵感', '挑选纹样，生成专属侗锦图案'],
     subtitle: '从 50 张侗锦纹样卡中挑选 3 张你喜欢的图样，组合生成属于你的侗锦设计。',
     cta: '开始生成',
-    languageToggle: 'English',
+    languageToggle: 'EN',
     slotLabel: '已选纹样',
     tapToFlip: '点击翻面',
     confirm: '确认加入',
