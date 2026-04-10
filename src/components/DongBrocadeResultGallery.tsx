@@ -223,7 +223,7 @@ export default function DongBrocadeResultGallery({
 
     const hostname = new URL(shareOrigin).hostname;
     const downloadUrl = new URL(
-      `/download?asset=${encodeURIComponent(outputAsset.publicId)}&lang=${languageMode}`,
+      `/#/download?asset=${encodeURIComponent(outputAsset.publicId)}&lang=${languageMode}`,
       shareOrigin,
     ).toString();
 

@@ -26,10 +26,52 @@ type AppRoute = {
 
 const GENERATION_DURATION_MS = 8200;
 
+const parseLanguageMode = (requestedLanguage: string | null): LanguageMode =>
+  requestedLanguage === 'en' ? 'en' : 'zh';
+
+const parseHashRoute = (url: URL): AppRoute | null => {
+  const rawHash = url.hash.replace(/^#/, '');
+  if (!rawHash) {
+    return null;
+  }
+
+  const normalizedHash = rawHash.startsWith('/') ? rawHash : `/${rawHash}`;
+  const hashUrl = new URL(normalizedHash, url.origin);
+  const routeLanguageMode = parseLanguageMode(hashUrl.searchParams.get('lang'));
+
+  if (hashUrl.pathname === '/download') {
+    return {
+      page: 'download',
+      assetId: hashUrl.searchParams.get('asset'),
+      languageMode: routeLanguageMode,
+    };
+  }
+
+  if (hashUrl.pathname === '/result') {
+    return {
+      page: 'result',
+      languageMode: routeLanguageMode,
+    };
+  }
+
+  if (hashUrl.pathname === '/') {
+    return {
+      page: 'hero',
+      languageMode: routeLanguageMode,
+    };
+  }
+
+  return null;
+};
+
 const parseRoute = (): AppRoute => {
   const url = new URL(window.location.href);
-  const requestedLanguage = url.searchParams.get('lang');
-  const routeLanguageMode: LanguageMode = requestedLanguage === 'en' ? 'en' : 'zh';
+  const hashRoute = parseHashRoute(url);
+  if (hashRoute) {
+    return hashRoute;
+  }
+
+  const routeLanguageMode = parseLanguageMode(url.searchParams.get('lang'));
 
   if (url.pathname === '/download') {
     return {
@@ -103,8 +145,20 @@ export default function App() {
       }
     };
 
+    const handleHashChange = () => {
+      const nextRoute = parseRoute();
+      setRoute(nextRoute);
+      if (nextRoute.languageMode) {
+        setLanguageMode(nextRoute.languageMode);
+      }
+    };
+
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -182,6 +236,7 @@ export default function App() {
     const url = new URL(window.location.href);
     url.pathname = '/';
     url.search = '';
+    url.hash = '/';
     window.history.pushState({}, '', url);
     setRoute({ page: 'hero' });
   };
